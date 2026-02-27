@@ -153,12 +153,14 @@
 
     async function fetchDefault() {
       try {
-        const res = await fetch('../data/pr-stats.json');
+        // Try relative path first (works on GitHub Pages at root), then parent (local dev from /dashboard/)
+        let res = await fetch('./data/pr-stats.json');
+        if (!res.ok) res = await fetch('../data/pr-stats.json');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         rawData = await res.json();
         initDashboard();
       } catch (e) {
-        alert('Could not load ../data/pr-stats.json. Use the file picker or serve from a local server.\n\n' + e.message);
+        alert('Could not load data/pr-stats.json. Use the file picker or serve from a local server.\n\n' + e.message);
       }
     }
 
