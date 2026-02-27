@@ -21,6 +21,14 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 5000): Pr
     } catch (err: any) {
       if (i === retries - 1) throw err;
       const status = err?.status ?? err?.response?.status;
+      // Search rate limit (403) — wait for reset
+      if (status === 403 && err?.response?.headers?.["x-ratelimit-remaining"] === "0") {
+        const resetAt = parseInt(err.response.headers["x-ratelimit-reset"] ?? "0") * 1000;
+        const waitMs = Math.max(1000, resetAt - Date.now() + 1000);
+        console.log(`    Search rate limit hit, waiting ${Math.ceil(waitMs / 1000)}s...`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
       if (status && status >= 400 && status < 500 && status !== 403) throw err;
       console.log(`    Retrying after error (attempt ${i + 2}/${retries})...`);
       await new Promise((r) => setTimeout(r, delay * (i + 1)));
@@ -42,6 +50,7 @@ interface PRData {
   commentCount: number;
   reviewCommentCount: number;
   abandonReason?: string;
+  supersededBy?: { number: number; title: string; author: string } | null;
 }
 
 interface AbandonReasonSummary {
@@ -191,39 +200,64 @@ async function fetchRepoPRs(
   return results;
 }
 
-function classifyAbandonReason(pr: PRData, lastComment: string, lastReviewState: string): string {
-  const lc = lastComment.toLowerCase();
+function classifyAbandonReason(
+  pr: PRData,
+  comments: string[],
+  lastReviewState: string,
+): string {
+  // Filter out stale bot comments to find the real signal
+  const realComments = comments.filter(
+    (c) => !c.includes("no update for 60 days") && !c.includes("no update for 30 days") && !c.includes("marked as a stale PR"),
+  );
+  const lc = (realComments.length > 0 ? realComments[realComments.length - 1] : "").toLowerCase();
+  const allComments = comments.join("\n").toLowerCase();
   const title = pr.title.toLowerCase();
 
-  if (lc.includes("60 days") || lc.includes("30 days")) return "stale_auto_closed";
-  if (/replaced by|moved to|closing in favo|handled in|instead|new pr|target release branch|favour of #|favor of #/.test(lc)) return "superseded";
+  // Superseded — explicit mention in comments
+  if (/replaced by|moved to|closing in favo|handled in|instead|new pr|target release branch|favour of #|favor of #/.test(allComments)) return "superseded";
+  // WIP loop
   if (title.startsWith("[wip]") || title.startsWith("wip")) return "wip_stuck";
+  // Review feedback copilot couldn't address
   if (lastReviewState === "CHANGES_REQUESTED") return "failed_review_feedback";
   if (pr.reviewCommentCount > 5) return "failed_review_feedback";
-  if (lc.includes("unable to handle") || lc.includes("copilot is unable")) return "agent_unable";
-  if (lc.includes("unexpected error")) return "agent_error";
+  // Agent errors
+  if (allComments.includes("unable to handle") || allComments.includes("copilot is unable")) return "agent_unable";
+  if (allComments.includes("unexpected error")) return "agent_error";
+  // Firewall/permissions — not a root cause, look deeper
+  // (removed: "blocked by firewall" is a transient issue, not the reason for abandonment)
+  // Dep upgrades
   if (/upgrade dep|update dep|bump|update node|update packages/.test(title)) return "failed_dep_upgrade";
+  // Not needed
   if (/not a bug|close for now|not needed|nvm|no this should|close this/.test(lc)) return "not_needed";
+  // Merge conflicts
   if (lc.includes("conflict")) return "merge_conflicts";
+  // Silently closed
   if (pr.commentCount === 0 && pr.reviewCommentCount === 0) return "silently_closed";
   return "other";
 }
 
 const REASON_DESCRIPTIONS: Record<string, string> = {
-  stale_auto_closed: "Auto-closed by stale policy (60+ days inactive)",
   silently_closed: "Silently closed with no comments or reviews",
   failed_review_feedback: "Failed to address review feedback",
   wip_stuck: "Agent stuck in WIP loop (repeated attempts)",
   duplicate_retry: "Duplicate retry attempts (same task)",
-  superseded: "Superseded by another PR",
+  superseded_by_copilot: "Superseded by another Copilot PR",
+  superseded_by_human: "Superseded by a human PR",
+  superseded: "Superseded by another PR (unknown author)",
   failed_dep_upgrade: "Failed dependency upgrade",
   not_needed: "Scope mismatch / not actually needed",
   agent_unable: "Agent explicitly unable to complete",
   agent_error: "Agent crashed with unexpected error",
-  blocked_permissions: "Blocked by firewall/permissions",
   merge_conflicts: "Unresolved merge conflicts",
   other: "Other / unclear reason",
 };
+
+function extractPRReferences(text: string): number[] {
+  const refs = new Set<number>();
+  for (const m of text.matchAll(/#(\d{3,})/g)) refs.add(parseInt(m[1]));
+  for (const m of text.matchAll(/\/pull\/(\d+)/g)) refs.add(parseInt(m[1]));
+  return [...refs];
+}
 
 async function classifyAbandonedPRs(
   octokit: Octokit,
@@ -243,15 +277,13 @@ async function classifyAbandonedPRs(
     const batch = abandoned.slice(i, i + CONCURRENCY);
     await Promise.allSettled(
       batch.map(async (pr) => {
-        let lastComment = "";
+        let allCommentBodies: string[] = [];
         let lastReviewState = "";
         try {
           const { data: comments } = await withRetry(() => octokit.issues.listComments({
             owner, repo, issue_number: pr.number, per_page: 100,
           }));
-          if (comments.length > 0) {
-            lastComment = comments[comments.length - 1].body ?? "";
-          }
+          allCommentBodies = comments.map((c) => c.body ?? "");
         } catch { /* ignore */ }
 
         try {
@@ -264,7 +296,30 @@ async function classifyAbandonedPRs(
           }
         } catch { /* ignore */ }
 
-        pr.abandonReason = classifyAbandonReason(pr, lastComment, lastReviewState);
+        pr.abandonReason = classifyAbandonReason(pr, allCommentBodies, lastReviewState);
+
+        // Check for superseding PR via references in comments
+        if (pr.abandonReason === "superseded" || pr.abandonReason === "other" || pr.abandonReason === "silently_closed") {
+          const allText = allCommentBodies.join("\n");
+          const referencedPRs = extractPRReferences(allText).filter((n) => n !== pr.number);
+
+          for (const refNum of referencedPRs) {
+            try {
+              const { data: refPR } = await withRetry(() => octokit.pulls.get({
+                owner, repo, pull_number: refNum,
+              }));
+              if (refPR.merged_at) {
+                pr.supersededBy = {
+                  number: refPR.number,
+                  title: refPR.title,
+                  author: refPR.user?.login ?? "unknown",
+                };
+                pr.abandonReason = "superseded";
+                break;
+              }
+            } catch { /* ignore — ref may not be a PR */ }
+          }
+        }
       }),
     );
     completed += batch.length;
@@ -281,6 +336,64 @@ async function classifyAbandonedPRs(
     const norm = pr.title.toLowerCase().replace(/\[(wip|python|copilot|http-client-\w+)\]\s*/g, "").trim();
     if ((titleCounts.get(norm) ?? 0) > 1 && pr.abandonReason !== "wip_stuck") {
       pr.abandonReason = "duplicate_retry";
+    }
+  }
+
+  // Search for superseding merged PRs by title similarity for remaining unclassified
+  const needsSupersededCheck = abandoned.filter(
+    (p) => !p.supersededBy && (p.abandonReason === "other" || p.abandonReason === "silently_closed" || p.abandonReason === "superseded"),
+  );
+  if (needsSupersededCheck.length > 0) {
+    console.log(`  Searching for superseding PRs for ${needsSupersededCheck.length} unclassified PRs...`);
+    let checked = 0;
+    // Use concurrency of 2 to avoid hitting search rate limit (30/min)
+    for (let i = 0; i < needsSupersededCheck.length; i += 2) {
+      const batch = needsSupersededCheck.slice(i, i + 2);
+      await Promise.allSettled(
+        batch.map(async (pr) => {
+          const keywords = pr.title
+            .replace(/\[.*?\]/g, "")
+            .replace(/[^a-zA-Z0-9\s]/g, " ")
+            .split(/\s+/)
+            .filter((w) => w.length > 3)
+            .slice(0, 4)
+            .join(" ");
+          if (!keywords) return;
+
+          try {
+            const { data } = await withRetry(() => octokit.request("GET /search/issues", {
+              q: `is:pr is:merged repo:${owner}/${repo} ${keywords}`,
+              per_page: 5,
+            }));
+            const prCreated = new Date(pr.createdAt).getTime();
+            for (const item of data.items) {
+              if (item.number === pr.number) continue;
+              const itemCreated = new Date(item.created_at).getTime();
+              if (Math.abs(itemCreated - prCreated) < 60 * 24 * 60 * 60 * 1000) {
+                pr.supersededBy = {
+                  number: item.number,
+                  title: item.title,
+                  author: (item.user as any)?.login ?? "unknown",
+                };
+                pr.abandonReason = "superseded";
+                break;
+              }
+            }
+          } catch { /* ignore search errors */ }
+        }),
+      );
+      checked += batch.length;
+      console.log(`    Checked ${checked}/${needsSupersededCheck.length}`);
+    }
+  }
+
+  // Split "superseded" into copilot vs human based on supersededBy author
+  for (const pr of abandoned) {
+    if (pr.abandonReason === "superseded" && pr.supersededBy) {
+      const author = pr.supersededBy.author.toLowerCase();
+      pr.abandonReason = (author === "copilot" || author === "copilot[bot]")
+        ? "superseded_by_copilot"
+        : "superseded_by_human";
     }
   }
 
