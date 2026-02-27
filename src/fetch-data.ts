@@ -41,10 +41,19 @@ interface PRData {
   timeToMergeDays: number | null;
   commentCount: number;
   reviewCommentCount: number;
+  abandonReason?: string;
+}
+
+interface AbandonReasonSummary {
+  reason: string;
+  count: number;
+  percentage: number;
+  description: string;
 }
 
 interface RepoData {
   prs: PRData[];
+  abandonReasons: AbandonReasonSummary[];
 }
 
 interface OutputData {
@@ -182,6 +191,117 @@ async function fetchRepoPRs(
   return results;
 }
 
+function classifyAbandonReason(pr: PRData, lastComment: string, lastReviewState: string): string {
+  const lc = lastComment.toLowerCase();
+  const title = pr.title.toLowerCase();
+
+  if (lc.includes("60 days") || lc.includes("30 days")) return "stale_auto_closed";
+  if (/replaced by|moved to|closing in favo|handled in|instead|new pr|target release branch|favour of #|favor of #/.test(lc)) return "superseded";
+  if (title.startsWith("[wip]") || title.startsWith("wip")) return "wip_stuck";
+  if (lastReviewState === "CHANGES_REQUESTED") return "failed_review_feedback";
+  if (pr.reviewCommentCount > 5) return "failed_review_feedback";
+  if (lc.includes("unable to handle") || lc.includes("copilot is unable")) return "agent_unable";
+  if (lc.includes("unexpected error")) return "agent_error";
+  if (/upgrade dep|update dep|bump|update node|update packages/.test(title)) return "failed_dep_upgrade";
+  if (/not a bug|close for now|not needed|nvm|no this should|close this/.test(lc)) return "not_needed";
+  if (lc.includes("conflict")) return "merge_conflicts";
+  if (pr.commentCount === 0 && pr.reviewCommentCount === 0) return "silently_closed";
+  return "other";
+}
+
+const REASON_DESCRIPTIONS: Record<string, string> = {
+  stale_auto_closed: "Auto-closed by stale policy (60+ days inactive)",
+  silently_closed: "Silently closed with no comments or reviews",
+  failed_review_feedback: "Failed to address review feedback",
+  wip_stuck: "Agent stuck in WIP loop (repeated attempts)",
+  duplicate_retry: "Duplicate retry attempts (same task)",
+  superseded: "Superseded by another PR",
+  failed_dep_upgrade: "Failed dependency upgrade",
+  not_needed: "Scope mismatch / not actually needed",
+  agent_unable: "Agent explicitly unable to complete",
+  agent_error: "Agent crashed with unexpected error",
+  blocked_permissions: "Blocked by firewall/permissions",
+  merge_conflicts: "Unresolved merge conflicts",
+  other: "Other / unclear reason",
+};
+
+async function classifyAbandonedPRs(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prs: PRData[],
+): Promise<AbandonReasonSummary[]> {
+  const abandoned = prs.filter((p) => p.state === "abandoned");
+  if (abandoned.length === 0) return [];
+
+  console.log(`  Classifying ${abandoned.length} abandoned PRs...`);
+
+  const CONCURRENCY = 10;
+  let completed = 0;
+
+  for (let i = 0; i < abandoned.length; i += CONCURRENCY) {
+    const batch = abandoned.slice(i, i + CONCURRENCY);
+    await Promise.allSettled(
+      batch.map(async (pr) => {
+        let lastComment = "";
+        let lastReviewState = "";
+        try {
+          const { data: comments } = await withRetry(() => octokit.issues.listComments({
+            owner, repo, issue_number: pr.number, per_page: 100,
+          }));
+          if (comments.length > 0) {
+            lastComment = comments[comments.length - 1].body ?? "";
+          }
+        } catch { /* ignore */ }
+
+        try {
+          const { data: reviews } = await withRetry(() => octokit.pulls.listReviews({
+            owner, repo, pull_number: pr.number, per_page: 100,
+          }));
+          const actionReviews = reviews.filter((r) => r.state !== "COMMENTED" && r.state !== "PENDING");
+          if (actionReviews.length > 0) {
+            lastReviewState = actionReviews[actionReviews.length - 1].state ?? "";
+          }
+        } catch { /* ignore */ }
+
+        pr.abandonReason = classifyAbandonReason(pr, lastComment, lastReviewState);
+      }),
+    );
+    completed += batch.length;
+    console.log(`    Classified ${completed}/${abandoned.length}`);
+  }
+
+  // Check for duplicate titles (retry pattern)
+  const titleCounts = new Map<string, number>();
+  for (const pr of abandoned) {
+    const norm = pr.title.toLowerCase().replace(/\[(wip|python|copilot|http-client-\w+)\]\s*/g, "").trim();
+    titleCounts.set(norm, (titleCounts.get(norm) ?? 0) + 1);
+  }
+  for (const pr of abandoned) {
+    const norm = pr.title.toLowerCase().replace(/\[(wip|python|copilot|http-client-\w+)\]\s*/g, "").trim();
+    if ((titleCounts.get(norm) ?? 0) > 1 && pr.abandonReason !== "wip_stuck") {
+      pr.abandonReason = "duplicate_retry";
+    }
+  }
+
+  // Summarize
+  const counts = new Map<string, number>();
+  for (const pr of abandoned) {
+    const reason = pr.abandonReason ?? "other";
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+
+  const total = abandoned.length;
+  return [...counts.entries()]
+    .sort(([, a], [, b]) => b - a)
+    .map(([reason, count]) => ({
+      reason,
+      count,
+      percentage: Math.round((count / total) * 100),
+      description: REASON_DESCRIPTIONS[reason] ?? reason,
+    }));
+}
+
 async function main() {
   const token = getToken();
   const octokit = new Octokit({ auth: token });
@@ -198,7 +318,8 @@ async function main() {
 
   for (const { owner, repo } of REPOS) {
     const prs = await fetchRepoPRs(octokit, owner, repo);
-    output.repos[`${owner}/${repo}`] = { prs };
+    const abandonReasons = await classifyAbandonedPRs(octokit, owner, repo, prs);
+    output.repos[`${owner}/${repo}`] = { prs, abandonReasons };
   }
 
   mkdirSync(DATA_DIR, { recursive: true });

@@ -144,6 +144,12 @@
         <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
         <canvas id="areaOverTimeChart"></canvas>
       </div>
+      <div class="chart-container full-width">
+        <h3>Why Copilot PRs Get Abandoned</h3>
+        <div id="abandonReasonsWrapper" style="position: relative; width: 100%;">
+          <canvas id="abandonReasonsChart"></canvas>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -446,6 +452,64 @@
           },
         },
       });
+
+      // Abandon reasons chart
+      const abandonReasonColors = {
+        stale_auto_closed: '#d29922',
+        silently_closed: '#8b949e',
+        failed_review_feedback: '#f85149',
+        wip_stuck: '#bc8cff',
+        duplicate_retry: '#f778ba',
+        superseded: '#58a6ff',
+        failed_dep_upgrade: '#ffa657',
+        not_needed: '#79c0ff',
+        agent_unable: '#ff7b72',
+        agent_error: '#ff7b72',
+        blocked_permissions: '#56d364',
+        merge_conflicts: '#d2a8ff',
+        other: '#484f58',
+      };
+
+      // Aggregate abandon reasons across selected repos
+      const reasonCounts = {};
+      const reasonDescs = {};
+      const selectedRepo = document.getElementById('repoSelect').value;
+      for (const [repoKey, repoData] of Object.entries(rawData.repos)) {
+        if (selectedRepo !== 'all' && repoKey !== selectedRepo) continue;
+        for (const r of (repoData.abandonReasons || [])) {
+          reasonCounts[r.reason] = (reasonCounts[r.reason] || 0) + r.count;
+          reasonDescs[r.reason] = r.description;
+        }
+      }
+      const sortedReasons = Object.entries(reasonCounts).sort(([, a], [, b]) => b - a);
+      const reasonWrapper = document.getElementById('abandonReasonsWrapper');
+      const reasonHeight = Math.max(250, sortedReasons.length * 36);
+      reasonWrapper.style.height = reasonHeight + 'px';
+      reasonWrapper.innerHTML = '<canvas></canvas>';
+      if (sortedReasons.length > 0) {
+        charts.abandonReasons = new Chart(reasonWrapper.querySelector('canvas'), {
+          type: 'bar',
+          data: {
+            labels: sortedReasons.map(([r]) => reasonDescs[r] || r),
+            datasets: [{
+              label: 'Abandoned PRs',
+              data: sortedReasons.map(([, c]) => c),
+              backgroundColor: sortedReasons.map(([r]) => abandonReasonColors[r] || '#484f58'),
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+              y: { ticks: { color: '#8b949e', autoSkip: false, font: { size: 12 } }, grid: { color: '#21262d' } },
+            },
+          },
+        });
+      }
     }
   </script>
 </body>
