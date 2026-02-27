@@ -136,7 +136,9 @@
       </div>
       <div class="chart-container full-width">
         <h3>PRs by Area</h3>
-        <canvas id="areaChart"></canvas>
+        <div id="areaChartWrapper" style="position: relative; width: 100%;">
+          <canvas id="areaChart"></canvas>
+        </div>
       </div>
       <div class="chart-container full-width">
         <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
@@ -279,7 +281,7 @@
       });
 
       // Destroy old charts
-      Object.values(charts).forEach(c => c.destroy());
+      Object.values(charts).forEach(c => { try { c.destroy(); } catch {} });
       charts = {};
 
       const chartDefaults = {
@@ -336,7 +338,7 @@
         options: chartDefaults,
       });
 
-      // Area breakdown (horizontal bar)
+      // Area breakdown (bar chart)
       const areaCounts = {};
       for (const pr of prs) {
         if (pr.areas.length === 0) {
@@ -347,11 +349,13 @@
         }
       }
       const sortedAreas = Object.entries(areaCounts).sort(([, a], [, b]) => b - a);
+      console.log('Area chart data:', sortedAreas.length, 'areas', sortedAreas.slice(0, 5));
       const areaBarHeight = Math.max(400, sortedAreas.length * 32);
-      const areaContainer = document.getElementById('areaChart').parentElement;
-      areaContainer.style.height = areaBarHeight + 'px';
-      areaContainer.style.position = 'relative';
-      charts.area = new Chart(document.getElementById('areaChart'), {
+      const areaWrapper = document.getElementById('areaChartWrapper');
+      areaWrapper.style.height = areaBarHeight + 'px';
+      areaWrapper.innerHTML = '<canvas></canvas>';
+      const areaCanvas = areaWrapper.querySelector('canvas');
+      charts.area = new Chart(areaCanvas, {
         type: 'bar',
         data: {
           labels: sortedAreas.map(([a]) => a),
@@ -363,12 +367,15 @@
           }],
         },
         options: {
-          ...chartDefaults,
+          responsive: true,
           maintainAspectRatio: false,
           indexAxis: 'y',
+          plugins: {
+            legend: { display: false },
+          },
           scales: {
-            x: { ...chartDefaults.scales.x, beginAtZero: true },
-            y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, autoSkip: false } },
+            x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+            y: { ticks: { color: '#8b949e', autoSkip: false }, grid: { color: '#21262d' } },
           },
         },
       });

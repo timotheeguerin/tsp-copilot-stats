@@ -121,49 +121,58 @@ async function fetchRepoPRs(
   // Step 1: Find PR numbers via commit search (fast)
   const copilotPRNumbers = await findCopilotPRNumbers(octokit, owner, repo);
 
-  // Step 2: Fetch details for just those PRs
+  // Step 2: Fetch details for those PRs (parallel, 10 at a time)
   const results: PRData[] = [];
-  console.log(`  Fetching details for ${copilotPRNumbers.size} PRs...`);
+  const prList = [...copilotPRNumbers];
+  const CONCURRENCY = 10;
+  console.log(`  Fetching details for ${prList.length} PRs (concurrency: ${CONCURRENCY})...`);
 
-  for (const prNumber of copilotPRNumbers) {
-    try {
-      const { data: pr } = await withRetry(() => octokit.pulls.get({
-        owner,
-        repo,
-        pull_number: prNumber,
-      }));
+  let completed = 0;
+  for (let i = 0; i < prList.length; i += CONCURRENCY) {
+    const batch = prList.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (prNumber) => {
+        const { data: pr } = await withRetry(() => octokit.pulls.get({
+          owner,
+          repo,
+          pull_number: prNumber,
+        }));
 
-      // Only include closed PRs
-      if (pr.state !== "closed") continue;
+        if (pr.state !== "closed") return null;
 
-      const state: "merged" | "abandoned" = pr.merged_at ? "merged" : "abandoned";
-      const areas = extractAreaLabels(pr.labels as { name: string }[]);
+        const state: "merged" | "abandoned" = pr.merged_at ? "merged" : "abandoned";
+        const areas = extractAreaLabels(pr.labels as { name: string }[]);
 
-      let timeToMergeDays: number | null = null;
-      if (pr.merged_at) {
-        const created = new Date(pr.created_at).getTime();
-        const merged = new Date(pr.merged_at).getTime();
-        timeToMergeDays = Math.round(((merged - created) / (1000 * 60 * 60 * 24)) * 10) / 10;
+        let timeToMergeDays: number | null = null;
+        if (pr.merged_at) {
+          const created = new Date(pr.created_at).getTime();
+          const merged = new Date(pr.merged_at).getTime();
+          timeToMergeDays = Math.round(((merged - created) / (1000 * 60 * 60 * 24)) * 10) / 10;
+        }
+
+        return {
+          number: pr.number,
+          title: pr.title,
+          author: pr.user?.login ?? "unknown",
+          state,
+          areas,
+          createdAt: pr.created_at,
+          closedAt: pr.closed_at,
+          mergedAt: pr.merged_at,
+          timeToMergeDays,
+          commentCount: pr.comments ?? 0,
+          reviewCommentCount: pr.review_comments ?? 0,
+        } satisfies PRData;
+      }),
+    );
+
+    for (const result of batchResults) {
+      if (result.status === "fulfilled" && result.value) {
+        results.push(result.value);
       }
-
-      results.push({
-        number: pr.number,
-        title: pr.title,
-        author: pr.user?.login ?? "unknown",
-        state,
-        areas,
-        createdAt: pr.created_at,
-        closedAt: pr.closed_at,
-        mergedAt: pr.merged_at,
-        timeToMergeDays,
-        commentCount: pr.comments ?? 0,
-        reviewCommentCount: pr.review_comments ?? 0,
-      });
-
-      console.log(`    ✓ PR #${pr.number} (${state}, areas: [${areas.join(", ")}])`);
-    } catch {
-      console.log(`    ✗ PR #${prNumber} — failed to fetch`);
     }
+    completed += batch.length;
+    console.log(`    Fetched ${completed}/${prList.length} PRs`);
   }
 
   // Sort by creation date
