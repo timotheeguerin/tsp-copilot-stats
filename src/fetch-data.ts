@@ -12,7 +12,7 @@ const REPOS = [
   { owner: "Azure", repo: "typespec-azure" },
 ] as const;
 
-const COPILOT_COAUTHOR_SEARCH = "Co-authored-by: Copilot";
+const COPILOT_AUTHOR = "@copilot";
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 5000): Promise<T> {
   for (let i = 0; i < retries; i++) {
@@ -74,101 +74,40 @@ function extractAreaLabels(labels: { name: string }[]): string[] {
     .filter((name) => areaPrefixes.some((p) => name.startsWith(p)));
 }
 
-// Use GitHub commit search to find Copilot co-authored commits, then map to PRs
+// Use GitHub search to find PRs authored by @copilot
 async function findCopilotPRNumbers(
   octokit: Octokit,
   owner: string,
   repo: string,
 ): Promise<Set<number>> {
   const prNumbers = new Set<number>();
-  let page = 1;
 
-  console.log(`  Searching for Copilot co-authored commits (merged)...`);
+  console.log(`  Searching for PRs authored by ${COPILOT_AUTHOR}...`);
 
-  // Search commits with the co-author trailer (only finds commits on default branch = merged PRs)
-  while (true) {
-    const { data } = await withRetry(() => octokit.rest.search.commits({
-      q: `"${COPILOT_COAUTHOR_SEARCH}" repo:${owner}/${repo}`,
-      per_page: 100,
-      page,
-    }));
+  // Search closed PRs authored by copilot
+  for (const stateFilter of ["is:merged", "is:unmerged"]) {
+    let page = 1;
+    while (true) {
+      const { data } = await withRetry(() => octokit.rest.search.issuesAndPullRequests({
+        q: `is:pr state:closed author:${COPILOT_AUTHOR} ${stateFilter} repo:${owner}/${repo}`,
+        per_page: 100,
+        page,
+      }));
 
-    if (data.items.length === 0) break;
+      if (data.items.length === 0) break;
 
-    console.log(`  Search page ${page}: ${data.items.length} commits (total: ${data.total_count})`);
-
-    for (const item of data.items) {
-      try {
-        const { data: associatedPRs } = await octokit.repos.listPullRequestsAssociatedWithCommit({
-          owner,
-          repo,
-          commit_sha: item.sha,
-          per_page: 10,
-        });
-        for (const pr of associatedPRs) {
-          prNumbers.add(pr.number);
-        }
-      } catch {
-        // skip if we can't get associated PRs
+      for (const item of data.items) {
+        prNumbers.add(item.number);
       }
-    }
 
-    // GitHub search API caps at 1000 results
-    if (page * 100 >= Math.min(data.total_count, 1000)) break;
-    page++;
+      console.log(`  Search ${stateFilter} page ${page}: ${data.items.length} PRs (total: ${data.total_count})`);
+
+      if (page * 100 >= Math.min(data.total_count, 1000)) break;
+      page++;
+    }
   }
 
-  console.log(`  Found ${prNumbers.size} merged PRs via commit search.`);
-
-  // Also search closed-unmerged PRs for Copilot co-authorship
-  console.log(`  Scanning closed-unmerged PRs for Copilot co-authorship...`);
-  let unmPage = 1;
-  let unmTotal = 0;
-  let unmCopilot = 0;
-
-  while (true) {
-    const { data: closedPRs } = await withRetry(() => octokit.pulls.list({
-      owner,
-      repo,
-      state: "closed",
-      sort: "updated",
-      direction: "desc",
-      per_page: 100,
-      page: unmPage,
-    }));
-
-    if (closedPRs.length === 0) break;
-
-    // Filter to only unmerged PRs
-    const unmergedPRs = closedPRs.filter((pr) => !pr.merged_at);
-    unmTotal += unmergedPRs.length;
-
-    for (const pr of unmergedPRs) {
-      if (prNumbers.has(pr.number)) continue;
-      try {
-        const { data: commits } = await octokit.pulls.listCommits({
-          owner,
-          repo,
-          pull_number: pr.number,
-          per_page: 100,
-        });
-        const hasCopilot = commits.some((c) =>
-          c.commit.message.includes(COPILOT_COAUTHOR_SEARCH),
-        );
-        if (hasCopilot) {
-          prNumbers.add(pr.number);
-          unmCopilot++;
-        }
-      } catch {
-        // skip
-      }
-    }
-
-    console.log(`  Scanned page ${unmPage} (${unmTotal} unmerged PRs, ${unmCopilot} Copilot)`);
-    unmPage++;
-  }
-
-  console.log(`  Total: ${prNumbers.size} unique Copilot PRs (${unmCopilot} abandoned).`);
+  console.log(`  Found ${prNumbers.size} Copilot-authored PRs.`);
   return prNumbers;
 }
 

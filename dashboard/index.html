@@ -61,7 +61,6 @@
     }
     .chart-container h3 { font-size: 16px; margin-bottom: 12px; }
     .chart-container.full-width { grid-column: 1 / -1; }
-    canvas { width: 100% !important; }
     .no-data {
       text-align: center; padding: 60px; color: var(--text-muted); font-size: 18px;
     }
@@ -348,8 +347,10 @@
         }
       }
       const sortedAreas = Object.entries(areaCounts).sort(([, a], [, b]) => b - a);
-      const areaBarHeight = Math.max(300, sortedAreas.length * 28);
-      document.getElementById('areaChart').parentElement.style.height = areaBarHeight + 'px';
+      const areaBarHeight = Math.max(400, sortedAreas.length * 32);
+      const areaContainer = document.getElementById('areaChart').parentElement;
+      areaContainer.style.height = areaBarHeight + 'px';
+      areaContainer.style.position = 'relative';
       charts.area = new Chart(document.getElementById('areaChart'), {
         type: 'bar',
         data: {
