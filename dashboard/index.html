@@ -338,19 +338,25 @@
         options: chartDefaults,
       });
 
-      // Area breakdown (bar chart)
-      const areaCounts = {};
+      // Area breakdown (stacked bar: merged vs abandoned)
+      const areaMerged = {};
+      const areaAbandoned = {};
       for (const pr of prs) {
-        if (pr.areas.length === 0) {
-          areaCounts['(unlabeled)'] = (areaCounts['(unlabeled)'] || 0) + 1;
-        }
-        for (const area of pr.areas) {
-          areaCounts[area] = (areaCounts[area] || 0) + 1;
+        const labels = pr.areas.length === 0 ? ['(unlabeled)'] : pr.areas;
+        for (const area of labels) {
+          if (pr.state === 'merged') {
+            areaMerged[area] = (areaMerged[area] || 0) + 1;
+          } else {
+            areaAbandoned[area] = (areaAbandoned[area] || 0) + 1;
+          }
         }
       }
-      const sortedAreas = Object.entries(areaCounts).sort(([, a], [, b]) => b - a);
-      console.log('Area chart data:', sortedAreas.length, 'areas', sortedAreas.slice(0, 5));
-      const areaBarHeight = Math.max(400, sortedAreas.length * 32);
+      const allAreaKeys = [...new Set([...Object.keys(areaMerged), ...Object.keys(areaAbandoned)])];
+      const sortedAreas = allAreaKeys
+        .map(a => [a, (areaMerged[a] || 0) + (areaAbandoned[a] || 0)])
+        .sort(([, a], [, b]) => b - a);
+      const areaLabels = sortedAreas.map(([a]) => a);
+      const areaBarHeight = Math.max(400, areaLabels.length * 32);
       const areaWrapper = document.getElementById('areaChartWrapper');
       areaWrapper.style.height = areaBarHeight + 'px';
       areaWrapper.innerHTML = '<canvas></canvas>';
@@ -358,24 +364,32 @@
       charts.area = new Chart(areaCanvas, {
         type: 'bar',
         data: {
-          labels: sortedAreas.map(([a]) => a),
-          datasets: [{
-            label: 'PRs',
-            data: sortedAreas.map(([, c]) => c),
-            backgroundColor: '#58a6ff',
-            borderRadius: 4,
-          }],
+          labels: areaLabels,
+          datasets: [
+            {
+              label: 'Merged',
+              data: areaLabels.map(a => areaMerged[a] || 0),
+              backgroundColor: '#3fb950',
+              borderRadius: 4,
+            },
+            {
+              label: 'Abandoned',
+              data: areaLabels.map(a => areaAbandoned[a] || 0),
+              backgroundColor: '#f85149',
+              borderRadius: 4,
+            },
+          ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           indexAxis: 'y',
           plugins: {
-            legend: { display: false },
+            legend: { labels: { color: '#8b949e' } },
           },
           scales: {
-            x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
-            y: { ticks: { color: '#8b949e', autoSkip: false }, grid: { color: '#21262d' } },
+            x: { stacked: true, ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+            y: { stacked: true, ticks: { color: '#8b949e', autoSkip: false }, grid: { color: '#21262d' } },
           },
         },
       });
