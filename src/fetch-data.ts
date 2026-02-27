@@ -88,7 +88,7 @@ async function findCopilotPRNumbers(
   for (const stateFilter of ["is:merged", "is:unmerged"]) {
     let page = 1;
     while (true) {
-      const { data } = await withRetry(() => octokit.rest.search.issuesAndPullRequests({
+      const { data } = await withRetry(() => octokit.request("GET /search/issues", {
         q: `is:pr state:closed author:${COPILOT_AUTHOR} ${stateFilter} repo:${owner}/${repo}`,
         per_page: 100,
         page,
