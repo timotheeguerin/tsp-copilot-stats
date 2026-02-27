@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot PR Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --orange: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    .subtitle { color: var(--text-muted); margin-bottom: 24px; font-size: 14px; }
+    .controls {
+      display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; align-items: center;
+    }
+    .controls label { color: var(--text-muted); font-size: 13px; }
+    .controls select, .controls input {
+      background: var(--surface); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 12px; border-radius: 6px; font-size: 14px;
+    }
+    .control-group { display: flex; flex-direction: column; gap: 4px; }
+    .summary-cards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px; margin-bottom: 32px;
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px;
+    }
+    .card .value { font-size: 32px; font-weight: 700; }
+    .card .label { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+    .card.green .value { color: var(--green); }
+    .card.blue .value { color: var(--accent); }
+    .card.orange .value { color: var(--orange); }
+    .card.red .value { color: var(--red); }
+    .charts-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+    }
+    .chart-container {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 20px;
+    }
+    .chart-container h3 { font-size: 16px; margin-bottom: 12px; }
+    .chart-container.full-width { grid-column: 1 / -1; }
+    canvas { width: 100% !important; }
+    .no-data {
+      text-align: center; padding: 60px; color: var(--text-muted); font-size: 18px;
+    }
+    .load-section {
+      text-align: center; padding: 60px;
+    }
+    .load-section input[type="file"] { margin: 16px; }
+    .load-section button {
+      background: var(--accent); color: #fff; border: none; padding: 10px 24px;
+      border-radius: 6px; font-size: 14px; cursor: pointer;
+    }
+    @media (max-width: 900px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Copilot PR Dashboard</h1>
+  <p class="subtitle">Stats for PRs co-authored by GitHub Copilot in TypeSpec repos</p>
+
+  <div id="load-section" class="load-section">
+    <p>Load the generated <code>pr-stats.json</code> file:</p>
+    <div>
+      <button onclick="fetchDefault()">Load from ../data/pr-stats.json</button>
+      <span style="color: var(--text-muted); margin: 0 8px;">or</span>
+      <input type="file" id="fileInput" accept=".json" onchange="loadFile(event)">
+    </div>
+  </div>
+
+  <div id="dashboard" style="display:none;">
+    <div class="controls">
+      <div class="control-group">
+        <label>Repository</label>
+        <select id="repoSelect" onchange="updateDashboard()">
+          <option value="all">All Repos</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Area</label>
+        <select id="areaSelect" onchange="updateDashboard()">
+          <option value="all">All Areas</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>From</label>
+        <input type="date" id="dateFrom" onchange="updateDashboard()">
+      </div>
+      <div class="control-group">
+        <label>To</label>
+        <input type="date" id="dateTo" onchange="updateDashboard()">
+      </div>
+    </div>
+
+    <div class="summary-cards">
+      <div class="card blue"><div class="value" id="totalPRs">0</div><div class="label">Total Copilot PRs</div></div>
+      <div class="card green"><div class="value" id="mergeRate">0%</div><div class="label">Merge Rate</div></div>
+      <div class="card orange"><div class="value" id="avgTimeToMerge">0d</div><div class="label">Avg Time to Merge</div></div>
+      <div class="card red"><div class="value" id="avgComments">0</div><div class="label">Avg Comments per PR</div></div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-container full-width">
+        <h3>Merged vs Abandoned (Weekly)</h3>
+        <canvas id="mergedVsAbandonedChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>Average Comments per PR (Weekly)</h3>
+        <canvas id="commentsChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>Average Time to Merge — Days (Weekly)</h3>
+        <canvas id="timeToMergeChart"></canvas>
+      </div>
+      <div class="chart-container full-width">
+        <h3>PRs by Area</h3>
+        <canvas id="areaChart"></canvas>
+      </div>
+      <div class="chart-container full-width">
+        <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
+        <canvas id="areaOverTimeChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let rawData = null;
+    let charts = {};
+
+    async function fetchDefault() {
+      try {
+        const res = await fetch('../data/pr-stats.json');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        rawData = await res.json();
+        initDashboard();
+      } catch (e) {
+        alert('Could not load ../data/pr-stats.json. Use the file picker or serve from a local server.\n\n' + e.message);
+      }
+    }
+
+    function loadFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        rawData = JSON.parse(e.target.result);
+        initDashboard();
+      };
+      reader.readAsText(file);
+    }
+
+    function getAllPRs() {
+      if (!rawData) return [];
+      return Object.entries(rawData.repos).flatMap(([repo, data]) =>
+        data.prs.map(pr => ({ ...pr, repo }))
+      );
+    }
+
+    function initDashboard() {
+      document.getElementById('load-section').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+
+      // Populate repo select
+      const repoSelect = document.getElementById('repoSelect');
+      repoSelect.innerHTML = '<option value="all">All Repos</option>';
+      for (const repo of Object.keys(rawData.repos)) {
+        const opt = document.createElement('option');
+        opt.value = repo; opt.textContent = repo;
+        repoSelect.appendChild(opt);
+      }
+
+      // Populate area select
+      const allAreas = new Set();
+      getAllPRs().forEach(pr => pr.areas.forEach(a => allAreas.add(a)));
+      const areaSelect = document.getElementById('areaSelect');
+      areaSelect.innerHTML = '<option value="all">All Areas</option>';
+      [...allAreas].sort().forEach(area => {
+        const opt = document.createElement('option');
+        opt.value = area; opt.textContent = area;
+        areaSelect.appendChild(opt);
+      });
+
+      // Set date range
+      const prs = getAllPRs();
+      if (prs.length > 0) {
+        const dates = prs.map(p => new Date(p.createdAt));
+        document.getElementById('dateFrom').value = new Date(Math.min(...dates)).toISOString().split('T')[0];
+        document.getElementById('dateTo').value = new Date().toISOString().split('T')[0];
+      }
+
+      updateDashboard();
+    }
+
+    function getFilteredPRs() {
+      const repo = document.getElementById('repoSelect').value;
+      const area = document.getElementById('areaSelect').value;
+      const dateFrom = document.getElementById('dateFrom').value;
+      const dateTo = document.getElementById('dateTo').value;
+
+      let prs = getAllPRs();
+      if (repo !== 'all') prs = prs.filter(p => p.repo === repo);
+      if (area !== 'all') prs = prs.filter(p => p.areas.includes(area));
+      if (dateFrom) prs = prs.filter(p => p.createdAt >= dateFrom);
+      if (dateTo) prs = prs.filter(p => p.createdAt <= dateTo + 'T23:59:59Z');
+      return prs;
+    }
+
+    // Get the Monday of the week for a given date
+    function getWeekStart(dateStr) {
+      const d = new Date(dateStr);
+      const day = d.getUTCDay();
+      const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
+      return monday.toISOString().split('T')[0];
+    }
+
+    function bucketByWeek(prs) {
+      const buckets = {};
+      for (const pr of prs) {
+        const week = getWeekStart(pr.createdAt);
+        if (!buckets[week]) buckets[week] = [];
+        buckets[week].push(pr);
+      }
+      // Sort by week
+      return Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b));
+    }
+
+    function updateDashboard() {
+      const prs = getFilteredPRs();
+      const merged = prs.filter(p => p.state === 'merged');
+      const abandoned = prs.filter(p => p.state === 'abandoned');
+
+      // Summary cards
+      document.getElementById('totalPRs').textContent = prs.length;
+      document.getElementById('mergeRate').textContent = prs.length > 0
+        ? (merged.length / prs.length * 100).toFixed(1) + '%' : '—';
+      const mergedWithTime = merged.filter(p => p.timeToMergeDays != null);
+      document.getElementById('avgTimeToMerge').textContent = mergedWithTime.length > 0
+        ? (mergedWithTime.reduce((s, p) => s + p.timeToMergeDays, 0) / mergedWithTime.length).toFixed(1) + 'd' : '—';
+      const totalComments = prs.reduce((s, p) => s + p.commentCount + p.reviewCommentCount, 0);
+      document.getElementById('avgComments').textContent = prs.length > 0
+        ? (totalComments / prs.length).toFixed(1) : '—';
+
+      // Weekly buckets
+      const weekly = bucketByWeek(prs);
+      const weeks = weekly.map(([w]) => w);
+      const mergedPerWeek = weekly.map(([, prs]) => prs.filter(p => p.state === 'merged').length);
+      const abandonedPerWeek = weekly.map(([, prs]) => prs.filter(p => p.state === 'abandoned').length);
+      const avgCommentsPerWeek = weekly.map(([, prs]) => {
+        if (prs.length === 0) return 0;
+        return prs.reduce((s, p) => s + p.commentCount + p.reviewCommentCount, 0) / prs.length;
+      });
+      const avgTimePerWeek = weekly.map(([, prs]) => {
+        const m = prs.filter(p => p.state === 'merged' && p.timeToMergeDays != null);
+        if (m.length === 0) return null;
+        return m.reduce((s, p) => s + p.timeToMergeDays, 0) / m.length;
+      });
+
+      // Destroy old charts
+      Object.values(charts).forEach(c => c.destroy());
+      charts = {};
+
+      const chartDefaults = {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: '#8b949e' } },
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      };
+
+      // Merged vs Abandoned
+      charts.mergedAbandoned = new Chart(document.getElementById('mergedVsAbandonedChart'), {
+        type: 'bar',
+        data: {
+          labels: weeks,
+          datasets: [
+            { label: 'Merged', data: mergedPerWeek, backgroundColor: '#3fb950', borderRadius: 4 },
+            { label: 'Abandoned', data: abandonedPerWeek, backgroundColor: '#f85149', borderRadius: 4 },
+          ],
+        },
+        options: { ...chartDefaults, scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } } },
+      });
+
+      // Comments per PR
+      charts.comments = new Chart(document.getElementById('commentsChart'), {
+        type: 'line',
+        data: {
+          labels: weeks,
+          datasets: [{
+            label: 'Avg Comments',
+            data: avgCommentsPerWeek,
+            borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.1)',
+            fill: true, tension: 0.3,
+          }],
+        },
+        options: chartDefaults,
+      });
+
+      // Time to merge (days)
+      charts.timeToMerge = new Chart(document.getElementById('timeToMergeChart'), {
+        type: 'line',
+        data: {
+          labels: weeks,
+          datasets: [{
+            label: 'Avg Days to Merge',
+            data: avgTimePerWeek,
+            borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)',
+            fill: true, tension: 0.3, spanGaps: true,
+          }],
+        },
+        options: chartDefaults,
+      });
+
+      // Area breakdown (horizontal bar)
+      const areaCounts = {};
+      for (const pr of prs) {
+        if (pr.areas.length === 0) {
+          areaCounts['(unlabeled)'] = (areaCounts['(unlabeled)'] || 0) + 1;
+        }
+        for (const area of pr.areas) {
+          areaCounts[area] = (areaCounts[area] || 0) + 1;
+        }
+      }
+      const sortedAreas = Object.entries(areaCounts).sort(([, a], [, b]) => b - a);
+      const areaBarHeight = Math.max(300, sortedAreas.length * 28);
+      document.getElementById('areaChart').parentElement.style.height = areaBarHeight + 'px';
+      charts.area = new Chart(document.getElementById('areaChart'), {
+        type: 'bar',
+        data: {
+          labels: sortedAreas.map(([a]) => a),
+          datasets: [{
+            label: 'PRs',
+            data: sortedAreas.map(([, c]) => c),
+            backgroundColor: '#58a6ff',
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          ...chartDefaults,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          scales: {
+            x: { ...chartDefaults.scales.x, beginAtZero: true },
+            y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, autoSkip: false } },
+          },
+        },
+      });
+
+      // Stacked area-over-time chart: each area as a dataset over weekly buckets
+      const areaColors = [
+        '#58a6ff', '#3fb950', '#f85149', '#d29922', '#bc8cff',
+        '#f778ba', '#79c0ff', '#56d364', '#ffa657', '#ff7b72',
+        '#d2a8ff', '#a5d6ff', '#7ee787', '#ffd33d', '#ff9bce',
+        '#bbdefb', '#c5e1a5', '#ffcc80', '#ef9a9a', '#b39ddb',
+      ];
+      // Collect all areas present in the data
+      const allAreasSet = new Set();
+      prs.forEach(pr => {
+        if (pr.areas.length === 0) allAreasSet.add('(unlabeled)');
+        pr.areas.forEach(a => allAreasSet.add(a));
+      });
+      const allAreasList = [...allAreasSet].sort();
+
+      const areaWeeklyDatasets = allAreasList.map((area, i) => {
+        const data = weekly.map(([, weekPrs]) => {
+          return weekPrs.filter(p =>
+            area === '(unlabeled)' ? p.areas.length === 0 : p.areas.includes(area)
+          ).length;
+        });
+        return {
+          label: area,
+          data,
+          backgroundColor: areaColors[i % areaColors.length] + '99',
+          borderColor: areaColors[i % areaColors.length],
+          borderWidth: 1,
+          fill: true,
+        };
+      });
+
+      charts.areaOverTime = new Chart(document.getElementById('areaOverTimeChart'), {
+        type: 'bar',
+        data: {
+          labels: weeks,
+          datasets: areaWeeklyDatasets,
+        },
+        options: {
+          ...chartDefaults,
+          scales: {
+            ...chartDefaults.scales,
+            x: { ...chartDefaults.scales.x, stacked: true },
+            y: { ...chartDefaults.scales.y, stacked: true },
+          },
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: { size: 11 } } },
+          },
+        },
+      });
+    }
+  </script>
+</body>
+</html>
