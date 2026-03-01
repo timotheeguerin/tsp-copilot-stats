@@ -24,7 +24,6 @@
       background: var(--bg);
       color: var(--text);
       padding: 24px;
-      max-width: 1400px;
       margin: 0 auto;
     }
     h1 { font-size: 24px; margin-bottom: 8px; }
@@ -71,6 +70,47 @@
     .load-section button {
       background: var(--accent); color: #fff; border: none; padding: 10px 24px;
       border-radius: 6px; font-size: 14px; cursor: pointer;
+    }
+    .pr-item {
+      display: flex; gap: 12px; padding: 8px 12px; border-radius: 6px;
+      border-bottom: 1px solid var(--border); align-items: baseline;
+    }
+    .pr-item:hover { background: rgba(255,255,255,0.03); }
+    .pr-item .pr-num { color: var(--accent); font-weight: 600; white-space: nowrap; }
+    .pr-item .pr-num a { color: var(--accent); text-decoration: none; }
+    .pr-item .pr-num a:hover { text-decoration: underline; }
+    .pr-item .pr-title { flex: 1; color: var(--text); }
+    .pr-item .pr-meta { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+    .pr-item .pr-superseded { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+    .pr-item .pr-superseded a { color: var(--accent); text-decoration: none; }
+    .pr-item .pr-superseded a:hover { text-decoration: underline; }
+    .dashboard-layout {
+      display: flex; gap: 24px;
+    }
+    .dashboard-main { flex: 1; min-width: 0; }
+    .side-panel {
+      width: 420px; flex-shrink: 0;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; position: sticky; top: 24px; align-self: flex-start;
+      max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+    }
+    .side-panel.hidden { display: none; }
+    .side-panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+    }
+    .side-panel-header h3 { font-size: 14px; margin: 0; }
+    .side-panel-header .count { color: var(--accent); font-weight: 600; }
+    .side-panel-close {
+      background: var(--border); color: var(--text); border: none; border-radius: 4px;
+      padding: 4px 12px; cursor: pointer; font-size: 12px;
+    }
+    .side-panel-close:hover { background: #484f58; }
+    .side-panel-body { overflow-y: auto; flex: 1; }
+    .pr-item { flex-wrap: wrap; }
+    @media (max-width: 1200px) {
+      .dashboard-layout { flex-direction: column; }
+      .side-panel { width: 100%; position: static; max-height: 500px; }
     }
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
@@ -119,36 +159,65 @@
       <div class="card green"><div class="value" id="mergeRate">0%</div><div class="label">Merge Rate</div></div>
       <div class="card orange"><div class="value" id="avgTimeToMerge">0d</div><div class="label">Avg Time to Merge</div></div>
       <div class="card red"><div class="value" id="avgComments">0</div><div class="label">Avg Comments per PR</div></div>
+      <div class="card green"><div class="value" id="autonomousRate">0%</div><div class="label">Fully Autonomous</div></div>
+      <div class="card orange"><div class="value" id="avgCostScore">0</div><div class="label">Avg Cost Score</div></div>
     </div>
 
-    <div class="charts-grid">
-      <div class="chart-container full-width">
-        <h3>Merged vs Abandoned (Weekly)</h3>
-        <canvas id="mergedVsAbandonedChart"></canvas>
-      </div>
-      <div class="chart-container">
-        <h3>Average Comments per PR (Weekly)</h3>
-        <canvas id="commentsChart"></canvas>
-      </div>
-      <div class="chart-container">
-        <h3>Average Time to Merge — Days (Weekly)</h3>
-        <canvas id="timeToMergeChart"></canvas>
-      </div>
-      <div class="chart-container full-width">
-        <h3>PRs by Area</h3>
-        <div id="areaChartWrapper" style="position: relative; width: 100%;">
-          <canvas id="areaChart"></canvas>
+    <div class="dashboard-layout">
+      <div class="dashboard-main">
+        <div class="charts-grid">
+          <div class="chart-container full-width">
+            <h3>Merged vs Abandoned (Weekly)</h3>
+            <canvas id="mergedVsAbandonedChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3>Average Comments per PR (Weekly)</h3>
+            <canvas id="commentsChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3>Average Time to Merge — Days (Weekly)</h3>
+            <canvas id="timeToMergeChart"></canvas>
+          </div>
+          <div class="chart-container full-width">
+            <h3>Human Intervention (Weekly)</h3>
+            <canvas id="humanInterventionChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3>Cost Score Distribution</h3>
+            <canvas id="costDistributionChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3>Avg Cost Score (Weekly)</h3>
+            <canvas id="costOverTimeChart"></canvas>
+          </div>
+          <div class="chart-container full-width">
+            <h3>PRs by Area</h3>
+            <div id="areaChartWrapper" style="position: relative; width: 100%;">
+              <canvas id="areaChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-container full-width">
+            <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
+            <canvas id="areaOverTimeChart"></canvas>
+          </div>
+          <div class="chart-container full-width">
+            <h3>Why Copilot PRs Get Abandoned</h3>
+            <div id="abandonReasonsWrapper" style="position: relative; width: 100%;">
+              <canvas id="abandonReasonsChart"></canvas>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="chart-container full-width">
-        <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
-        <canvas id="areaOverTimeChart"></canvas>
-      </div>
-      <div class="chart-container full-width">
-        <h3>Why Copilot PRs Get Abandoned</h3>
-        <div id="abandonReasonsWrapper" style="position: relative; width: 100%;">
-          <canvas id="abandonReasonsChart"></canvas>
+
+      <div id="sidePanel" class="side-panel hidden">
+        <div class="side-panel-header">
+          <div>
+            <h3 id="sidePanelTitle"></h3>
+            <span class="count" id="sidePanelCount"></span>
+          </div>
+          <button class="side-panel-close" onclick="closeSidePanel()">✕</button>
         </div>
+        <div class="side-panel-body" id="sidePanelBody"></div>
       </div>
     </div>
   </div>
@@ -258,6 +327,7 @@
     }
 
     function updateDashboard() {
+      closeSidePanel();
       const prs = getFilteredPRs();
       const merged = prs.filter(p => p.state === 'merged');
       const abandoned = prs.filter(p => p.state === 'abandoned');
@@ -272,6 +342,20 @@
       const totalComments = prs.reduce((s, p) => s + p.commentCount + p.reviewCommentCount, 0);
       document.getElementById('avgComments').textContent = prs.length > 0
         ? (totalComments / prs.length).toFixed(1) : '—';
+
+      // Autonomous rate and cost score — gracefully handle missing data
+      const hasHumanData = prs.some(p => p.totalCommits !== undefined);
+      if (hasHumanData) {
+        const autonomous = prs.filter(p => !p.hadHumanPush && p.state === 'merged');
+        document.getElementById('autonomousRate').textContent = merged.length > 0
+          ? (autonomous.length / merged.length * 100).toFixed(0) + '%' : '—';
+        const avgCost = prs.length > 0
+          ? prs.reduce((s, p) => s + (p.costScore || 0), 0) / prs.length : 0;
+        document.getElementById('avgCostScore').textContent = avgCost > 0 ? avgCost.toFixed(1) : '—';
+      } else {
+        document.getElementById('autonomousRate').textContent = '—';
+        document.getElementById('avgCostScore').textContent = '—';
+      }
 
       // Weekly buckets
       const weekly = bucketByWeek(prs);
@@ -301,6 +385,9 @@
           x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
           y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
         },
+        onHover: (evt, elements) => {
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+        },
       };
 
       // Merged vs Abandoned
@@ -313,7 +400,19 @@
             { label: 'Abandoned', data: abandonedPerWeek, backgroundColor: '#f85149', borderRadius: 4 },
           ],
         },
-        options: { ...chartDefaults, scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } } },
+        options: {
+          ...chartDefaults,
+          scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } },
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            const dsIdx = elements[0].datasetIndex;
+            const week = weeks[idx];
+            const state = dsIdx === 0 ? 'merged' : 'abandoned';
+            const weekPRs = weekly[idx][1].filter(p => p.state === state);
+            openSidePanel(`${state === 'merged' ? 'Merged' : 'Abandoned'} — week of ${week}`, weekPRs);
+          },
+        },
       });
 
       // Comments per PR
@@ -328,7 +427,14 @@
             fill: true, tension: 0.3,
           }],
         },
-        options: chartDefaults,
+        options: {
+          ...chartDefaults,
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            openSidePanel(`PRs — week of ${weeks[idx]}`, weekly[idx][1]);
+          },
+        },
       });
 
       // Time to merge (days)
@@ -343,8 +449,114 @@
             fill: true, tension: 0.3, spanGaps: true,
           }],
         },
-        options: chartDefaults,
+        options: {
+          ...chartDefaults,
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            const weekMerged = weekly[idx][1].filter(p => p.state === 'merged');
+            openSidePanel(`Merged PRs — week of ${weeks[idx]}`, weekMerged);
+          },
+        },
       });
+
+      // Human Intervention chart (weekly stacked bar: autonomous / human-assisted / abandoned)
+      if (hasHumanData) {
+        const autonomousPerWeek = weekly.map(([, wPrs]) =>
+          wPrs.filter(p => p.state === 'merged' && !p.hadHumanPush).length);
+        const humanAssistedPerWeek = weekly.map(([, wPrs]) =>
+          wPrs.filter(p => p.state === 'merged' && p.hadHumanPush).length);
+        const abandonedHumanPerWeek = weekly.map(([, wPrs]) =>
+          wPrs.filter(p => p.state === 'abandoned').length);
+
+        charts.humanIntervention = new Chart(document.getElementById('humanInterventionChart'), {
+          type: 'bar',
+          data: {
+            labels: weeks,
+            datasets: [
+              { label: 'Autonomous (merged, no human commits)', data: autonomousPerWeek, backgroundColor: '#3fb950', borderRadius: 4 },
+              { label: 'Human-assisted (merged, has human commits)', data: humanAssistedPerWeek, backgroundColor: '#d29922', borderRadius: 4 },
+              { label: 'Abandoned', data: abandonedHumanPerWeek, backgroundColor: '#f85149', borderRadius: 4 },
+            ],
+          },
+          options: {
+            ...chartDefaults,
+            scales: { ...chartDefaults.scales, x: { ...chartDefaults.scales.x, stacked: true }, y: { ...chartDefaults.scales.y, stacked: true } },
+            onClick: (evt, elements) => {
+              if (!elements.length) return;
+              const idx = elements[0].index;
+              const dsIdx = elements[0].datasetIndex;
+              const wPrs = weekly[idx][1];
+              let filtered, label;
+              if (dsIdx === 0) { filtered = wPrs.filter(p => p.state === 'merged' && !p.hadHumanPush); label = 'Autonomous'; }
+              else if (dsIdx === 1) { filtered = wPrs.filter(p => p.state === 'merged' && p.hadHumanPush); label = 'Human-assisted'; }
+              else { filtered = wPrs.filter(p => p.state === 'abandoned'); label = 'Abandoned'; }
+              openSidePanel(`${label} — week of ${weeks[idx]}`, filtered);
+            },
+          },
+        });
+
+        // Cost Score Distribution (histogram)
+        const costBuckets = [
+          { label: '0 (autonomous)', min: 0, max: 0.001, color: '#3fb950' },
+          { label: '0.1–3 (low)', min: 0.001, max: 3, color: '#58a6ff' },
+          { label: '3–6 (medium)', min: 3, max: 6, color: '#d29922' },
+          { label: '6–10 (high)', min: 6, max: 10, color: '#f85149' },
+          { label: '10+ (very high)', min: 10, max: Infinity, color: '#bc8cff' },
+        ];
+        const costBucketCounts = costBuckets.map(b =>
+          prs.filter(p => (p.costScore || 0) >= b.min && (p.costScore || 0) < b.max).length);
+
+        charts.costDistribution = new Chart(document.getElementById('costDistributionChart'), {
+          type: 'bar',
+          data: {
+            labels: costBuckets.map(b => b.label),
+            datasets: [{
+              label: 'PRs',
+              data: costBucketCounts,
+              backgroundColor: costBuckets.map(b => b.color),
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            ...chartDefaults,
+            onClick: (evt, elements) => {
+              if (!elements.length) return;
+              const idx = elements[0].index;
+              const b = costBuckets[idx];
+              const filtered = prs.filter(p => (p.costScore || 0) >= b.min && (p.costScore || 0) < b.max);
+              openSidePanel(`Cost ${b.label}`, filtered);
+            },
+          },
+        });
+
+        // Cost Score Over Time (weekly)
+        const avgCostPerWeek = weekly.map(([, wPrs]) => {
+          if (wPrs.length === 0) return null;
+          return wPrs.reduce((s, p) => s + (p.costScore || 0), 0) / wPrs.length;
+        });
+
+        charts.costOverTime = new Chart(document.getElementById('costOverTimeChart'), {
+          type: 'line',
+          data: {
+            labels: weeks,
+            datasets: [{
+              label: 'Avg Cost Score',
+              data: avgCostPerWeek,
+              borderColor: '#bc8cff', backgroundColor: 'rgba(188,140,255,0.1)',
+              fill: true, tension: 0.3, spanGaps: true,
+            }],
+          },
+          options: {
+            ...chartDefaults,
+            onClick: (evt, elements) => {
+              if (!elements.length) return;
+              const idx = elements[0].index;
+              openSidePanel(`PRs — week of ${weeks[idx]}`, weekly[idx][1]);
+            },
+          },
+        });
+      }
 
       // Area breakdown (stacked bar: merged vs abandoned)
       const areaMerged = {};
@@ -399,6 +611,18 @@
             x: { stacked: true, ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
             y: { stacked: true, ticks: { color: '#8b949e', autoSkip: false }, grid: { color: '#21262d' } },
           },
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            const dsIdx = elements[0].datasetIndex;
+            const area = areaLabels[idx];
+            const state = dsIdx === 0 ? 'merged' : 'abandoned';
+            const areaPRs = prs.filter(p => {
+              const matchArea = area === '(unlabeled)' ? p.areas.length === 0 : p.areas.includes(area);
+              return matchArea && p.state === state;
+            });
+            openSidePanel(`${area} — ${state}`, areaPRs);
+          },
         },
       });
 
@@ -450,6 +674,17 @@
             ...chartDefaults.plugins,
             legend: { labels: { color: '#8b949e', boxWidth: 12, padding: 8, font: { size: 11 } } },
           },
+          onClick: (evt, elements) => {
+            if (!elements.length) return;
+            const idx = elements[0].index;
+            const dsIdx = elements[0].datasetIndex;
+            const area = allAreasList[dsIdx];
+            const week = weeks[idx];
+            const weekPRs = weekly[idx][1].filter(p =>
+              area === '(unlabeled)' ? p.areas.length === 0 : p.areas.includes(area)
+            );
+            openSidePanel(`${area} — week of ${week}`, weekPRs);
+          },
         },
       });
 
@@ -482,6 +717,7 @@
         }
       }
       const sortedReasons = Object.entries(reasonCounts).sort(([, a], [, b]) => b - a);
+      const reasonKeys = sortedReasons.map(([r]) => r);
       const reasonWrapper = document.getElementById('abandonReasonsWrapper');
       const reasonHeight = Math.max(250, sortedReasons.length * 36);
       reasonWrapper.style.height = reasonHeight + 'px';
@@ -505,11 +741,72 @@
             plugins: { legend: { display: false } },
             scales: {
               x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
-              y: { ticks: { color: '#8b949e', autoSkip: false, font: { size: 12 } }, grid: { color: '#21262d' } },
+              y: { ticks: { color: '#8b949e', autoSkip: false, font: { size: 12 }, cursor: 'pointer' }, grid: { color: '#21262d' } },
+            },
+            onClick: (evt, elements) => {
+              if (elements.length === 0) return;
+              const idx = elements[0].index;
+              const key = reasonKeys[idx];
+              const label = reasonDescs[key] || key;
+              const prs = getFilteredPRs().filter(p => p.state === 'abandoned' && p.abandonReason === key);
+              openSidePanel(label, prs);
             },
           },
         });
       }
+    }
+
+    function renderPRItem(pr) {
+      const url = `https://github.com/${pr.repo}/pull/${pr.number}`;
+      const date = new Date(pr.createdAt).toLocaleDateString();
+      const areas = pr.areas.length > 0 ? pr.areas.join(', ') : '';
+      const stateTag = pr.state === 'merged'
+        ? '<span style="color:var(--green);font-size:11px;">✓ merged</span>'
+        : '<span style="color:var(--red);font-size:11px;">✗ abandoned</span>';
+      let extra = '';
+      if (pr.supersededBy) {
+        const sUrl = `https://github.com/${pr.repo}/pull/${pr.supersededBy.number}`;
+        extra = `<div class="pr-superseded">→ <a href="${sUrl}" target="_blank">#${pr.supersededBy.number}</a> (${pr.supersededBy.author})</div>`;
+      }
+      if (pr.timeToMergeDays != null) {
+        extra += `<div class="pr-superseded">${pr.timeToMergeDays}d to merge · ${pr.commentCount + pr.reviewCommentCount} comments</div>`;
+      }
+      // Cost & human intervention info
+      if (pr.totalCommits !== undefined) {
+        const costColor = (pr.costScore || 0) <= 0 ? 'var(--green)' : (pr.costScore || 0) <= 3 ? 'var(--accent)' : (pr.costScore || 0) <= 6 ? 'var(--orange)' : 'var(--red)';
+        let costLine = `<span style="color:${costColor}">cost: ${(pr.costScore || 0).toFixed(1)}</span>`;
+        if (pr.hadHumanPush) {
+          costLine += ` · <span style="color:var(--orange)">${pr.humanCommits} human commit${pr.humanCommits > 1 ? 's' : ''}</span>`;
+        }
+        if (pr.reviewRounds > 0) {
+          costLine += ` · ${pr.reviewRounds} review round${pr.reviewRounds > 1 ? 's' : ''}`;
+        }
+        extra += `<div class="pr-superseded">${costLine}</div>`;
+      }
+      return `<div class="pr-item">
+        <span class="pr-num"><a href="${url}" target="_blank">#${pr.number}</a></span>
+        <div style="flex:1;min-width:0">
+          <div class="pr-title" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pr.title}</div>
+          ${extra}
+        </div>
+        <div style="text-align:right">
+          ${stateTag}<br>
+          <span class="pr-meta">${date}</span>
+        </div>
+      </div>`;
+    }
+
+    function openSidePanel(title, prs) {
+      prs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const panel = document.getElementById('sidePanel');
+      document.getElementById('sidePanelTitle').textContent = title;
+      document.getElementById('sidePanelCount').textContent = `${prs.length} PRs`;
+      document.getElementById('sidePanelBody').innerHTML = prs.map(renderPRItem).join('');
+      panel.classList.remove('hidden');
+    }
+
+    function closeSidePanel() {
+      document.getElementById('sidePanel').classList.add('hidden');
     }
   </script>
 </body>

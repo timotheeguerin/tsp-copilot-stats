@@ -51,6 +51,14 @@ interface PRData {
   reviewCommentCount: number;
   abandonReason?: string;
   supersededBy?: { number: number; title: string; author: string } | null;
+  // Human interaction metrics
+  totalCommits: number;
+  copilotCommits: number;
+  humanCommits: number;
+  hadHumanPush: boolean;
+  humanAuthors: string[];
+  reviewRounds: number; // number of CHANGES_REQUESTED reviews
+  costScore: number;
 }
 
 interface AbandonReasonSummary {
@@ -129,6 +137,22 @@ async function findCopilotPRNumbers(
   return prNumbers;
 }
 
+function computeCostScore(params: {
+  humanCommits: number;
+  reviewRounds: number;
+  reviewCommentCount: number;
+  commentCount: number;
+  abandoned: boolean;
+}): number {
+  const score =
+    params.humanCommits * 3 +      // manual fixes are the most expensive
+    params.reviewRounds * 2 +       // each back-and-forth review cycle
+    params.reviewCommentCount * 0.3 + // inline review feedback
+    params.commentCount * 0.2 +     // discussion overhead
+    (params.abandoned ? 5 : 0);     // abandoned = wasted effort
+  return Math.round(score * 10) / 10;
+}
+
 async function fetchRepoPRs(
   octokit: Octokit,
   owner: string,
@@ -150,12 +174,13 @@ async function fetchRepoPRs(
     const batch = prList.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.allSettled(
       batch.map(async (prNumber) => {
-        const { data: pr } = await withRetry(() => octokit.pulls.get({
-          owner,
-          repo,
-          pull_number: prNumber,
-        }));
+        const [prRes, commitsRes, reviewsRes] = await Promise.all([
+          withRetry(() => octokit.pulls.get({ owner, repo, pull_number: prNumber })),
+          withRetry(() => octokit.pulls.listCommits({ owner, repo, pull_number: prNumber, per_page: 100 })),
+          withRetry(() => octokit.pulls.listReviews({ owner, repo, pull_number: prNumber, per_page: 100 })),
+        ]);
 
+        const pr = prRes.data;
         if (pr.state !== "closed") return null;
 
         const state: "merged" | "abandoned" = pr.merged_at ? "merged" : "abandoned";
@@ -167,6 +192,35 @@ async function fetchRepoPRs(
           const merged = new Date(pr.merged_at).getTime();
           timeToMergeDays = Math.round(((merged - created) / (1000 * 60 * 60 * 24)) * 10) / 10;
         }
+
+        // Analyze commits for human vs copilot authorship
+        const copilotLogins = new Set(["copilot", "copilot[bot]"]);
+        const commits = commitsRes.data;
+        let copilotCommits = 0;
+        let humanCommits = 0;
+        const humanAuthorSet = new Set<string>();
+        for (const commit of commits) {
+          const authorLogin = (commit.author?.login ?? "").toLowerCase();
+          if (copilotLogins.has(authorLogin)) {
+            copilotCommits++;
+          } else {
+            humanCommits++;
+            if (commit.author?.login) humanAuthorSet.add(commit.author.login);
+          }
+        }
+
+        // Count review rounds (CHANGES_REQUESTED)
+        const reviews = reviewsRes.data;
+        const reviewRounds = reviews.filter((r) => r.state === "CHANGES_REQUESTED").length;
+
+        // Compute cost score
+        const costScore = computeCostScore({
+          humanCommits,
+          reviewRounds,
+          reviewCommentCount: pr.review_comments ?? 0,
+          commentCount: pr.comments ?? 0,
+          abandoned: state === "abandoned",
+        });
 
         return {
           number: pr.number,
@@ -180,6 +234,13 @@ async function fetchRepoPRs(
           timeToMergeDays,
           commentCount: pr.comments ?? 0,
           reviewCommentCount: pr.review_comments ?? 0,
+          totalCommits: commits.length,
+          copilotCommits,
+          humanCommits,
+          hadHumanPush: humanCommits > 0,
+          humanAuthors: [...humanAuthorSet],
+          reviewRounds,
+          costScore,
         } satisfies PRData;
       }),
     );
@@ -196,7 +257,9 @@ async function fetchRepoPRs(
   // Sort by creation date
   results.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
+  const humanPushCount = results.filter((p) => p.hadHumanPush).length;
   console.log(`  Total: ${results.length} closed Copilot PRs (${results.filter((p) => p.state === "merged").length} merged, ${results.filter((p) => p.state === "abandoned").length} abandoned)`);
+  console.log(`  Human intervention: ${humanPushCount} PRs (${((humanPushCount / results.length) * 100).toFixed(1)}%) had human commits`);
   return results;
 }
 
