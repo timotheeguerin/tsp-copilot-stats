@@ -115,6 +115,22 @@
     @media (max-width: 900px) {
       .charts-grid { grid-template-columns: 1fr; }
     }
+    .cost-tooltip-wrap {
+      position: relative; display: inline-block; cursor: help;
+    }
+    .cost-tooltip-wrap .cost-tooltip {
+      display: none; position: absolute; bottom: 100%; left: 0;
+      background: #1c2128; border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 12px; font-size: 12px; white-space: nowrap; z-index: 100;
+      color: var(--text); line-height: 1.6; pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4); margin-bottom: 4px;
+    }
+    .cost-tooltip-wrap:hover .cost-tooltip { display: block; }
+    .side-panel-body .cost-tooltip-wrap .cost-tooltip { bottom: auto; top: 100%; margin-bottom: 0; margin-top: 4px; }
+    .cost-tooltip .ct-row { display: flex; justify-content: space-between; gap: 16px; }
+    .cost-tooltip .ct-label { color: var(--text-muted); }
+    .cost-tooltip .ct-val { font-weight: 600; text-align: right; }
+    .cost-tooltip .ct-total { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
   </style>
 </head>
 <body>
@@ -841,7 +857,21 @@
       // Cost & human intervention info
       if (pr.totalCommits !== undefined) {
         const costColor = (pr.costScore || 0) <= 0 ? 'var(--green)' : (pr.costScore || 0) <= 3 ? 'var(--accent)' : (pr.costScore || 0) <= 6 ? 'var(--orange)' : 'var(--red)';
-        let costLine = `<span style="color:${costColor}">cost: ${(pr.costScore || 0).toFixed(1)}</span>`;
+        const hc = pr.humanCommits || 0;
+        const rr = pr.reviewRounds || 0;
+        const rc = pr.reviewCommentCount || 0;
+        const cc = pr.commentCount || 0;
+        const ab = pr.state === 'abandoned';
+        const lines = [
+          `<div class="ct-row"><span class="ct-label">Human commits (×3)</span><span class="ct-val">${hc} × 3 = ${(hc * 3).toFixed(1)}</span></div>`,
+          `<div class="ct-row"><span class="ct-label">Review rounds (×2)</span><span class="ct-val">${rr} × 2 = ${(rr * 2).toFixed(1)}</span></div>`,
+          `<div class="ct-row"><span class="ct-label">Review comments (×0.3)</span><span class="ct-val">${rc} × 0.3 = ${(rc * 0.3).toFixed(1)}</span></div>`,
+          `<div class="ct-row"><span class="ct-label">Comments (×0.2)</span><span class="ct-val">${cc} × 0.2 = ${(cc * 0.2).toFixed(1)}</span></div>`,
+          ab ? `<div class="ct-row"><span class="ct-label">Abandoned penalty</span><span class="ct-val">+5.0</span></div>` : '',
+          pr.inheritedCommits ? `<div class="ct-row"><span class="ct-label">Inherited commits (excluded)</span><span class="ct-val">${pr.inheritedCommits}</span></div>` : '',
+          `<div class="ct-row ct-total"><span class="ct-label">Total</span><span class="ct-val" style="color:${costColor}">${(pr.costScore || 0).toFixed(1)}</span></div>`,
+        ].filter(Boolean).join('');
+        let costLine = `<span class="cost-tooltip-wrap" style="color:${costColor}">cost: ${(pr.costScore || 0).toFixed(1)}<span class="cost-tooltip">${lines}</span></span>`;
         if (pr.hadHumanPush) {
           costLine += ` · <span style="color:var(--orange)">${pr.humanCommits} human commit${pr.humanCommits > 1 ? 's' : ''}</span>`;
         }
