@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "fetch": "tsx src/fetch-data.ts"
+    "fetch": "tsx src/fetch-data.ts",
+    "label-areas": "tsx src/label-areas.ts"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0"
