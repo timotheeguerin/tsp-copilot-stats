@@ -197,6 +197,12 @@
             </div>
           </div>
           <div class="chart-container full-width">
+            <h3>Avg Cost Score by Area</h3>
+            <div id="costByAreaWrapper" style="position: relative; width: 100%;">
+              <canvas id="costByAreaChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-container full-width">
             <h3>PRs by Area Over Time (Weekly, Stacked)</h3>
             <canvas id="areaOverTimeChart"></canvas>
           </div>
@@ -625,6 +631,67 @@
           },
         },
       });
+
+      // Cost Score by Area (horizontal bar)
+      if (hasHumanData) {
+        const areaCostMap = {};
+        const areaCostCount = {};
+        for (const pr of prs) {
+          const labels = pr.areas.length === 0 ? ['(unlabeled)'] : pr.areas;
+          for (const area of labels) {
+            areaCostMap[area] = (areaCostMap[area] || 0) + (pr.costScore || 0);
+            areaCostCount[area] = (areaCostCount[area] || 0) + 1;
+          }
+        }
+        const costAreaKeys = Object.keys(areaCostMap);
+        const sortedCostAreas = costAreaKeys
+          .map(a => [a, areaCostMap[a] / areaCostCount[a]])
+          .sort(([, a], [, b]) => b - a);
+        const costAreaLabels = sortedCostAreas.map(([a]) => a);
+        const costAreaValues = sortedCostAreas.map(([, v]) => Math.round(v * 10) / 10);
+        const costAreaBarHeight = Math.max(400, costAreaLabels.length * 32);
+        const costAreaWrapper = document.getElementById('costByAreaWrapper');
+        costAreaWrapper.style.height = costAreaBarHeight + 'px';
+        costAreaWrapper.innerHTML = '<canvas></canvas>';
+        const costAreaCanvas = costAreaWrapper.querySelector('canvas');
+        charts.costByArea = new Chart(costAreaCanvas, {
+          type: 'bar',
+          data: {
+            labels: costAreaLabels,
+            datasets: [{
+              label: 'Avg Cost Score',
+              data: costAreaValues,
+              backgroundColor: costAreaValues.map(v =>
+                v <= 3 ? '#3fb950' : v <= 6 ? '#d29922' : v <= 10 ? '#f85149' : '#bc8cff'),
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+              legend: { display: false },
+            },
+            scales: {
+              x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+              y: { ticks: { color: '#8b949e', autoSkip: false }, grid: { color: '#21262d' } },
+            },
+            onHover: (evt, elements) => {
+              evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            },
+            onClick: (evt, elements) => {
+              if (!elements.length) return;
+              const idx = elements[0].index;
+              const area = costAreaLabels[idx];
+              const areaPRs = prs.filter(p =>
+                area === '(unlabeled)' ? p.areas.length === 0 : p.areas.includes(area));
+              areaPRs.sort((a, b) => (b.costScore || 0) - (a.costScore || 0));
+              openSidePanel(`${area} — avg cost ${costAreaValues[idx]}`, areaPRs);
+            },
+          },
+        });
+      }
 
       // Stacked area-over-time chart: each area as a dataset over weekly buckets
       const areaColors = [
