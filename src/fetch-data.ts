@@ -55,6 +55,7 @@ interface PRData {
   totalCommits: number;
   copilotCommits: number;
   humanCommits: number;
+  inheritedCommits: number; // commits from base branch divergence (pre-PR)
   hadHumanPush: boolean;
   humanAuthors: string[];
   reviewRounds: number; // number of CHANGES_REQUESTED reviews
@@ -196,10 +197,19 @@ async function fetchRepoPRs(
         // Analyze commits for human vs copilot authorship
         const copilotLogins = new Set(["copilot", "copilot[bot]"]);
         const commits = commitsRes.data;
+        const prCreatedAt = new Date(pr.created_at).getTime();
+        const inheritedCutoff = prCreatedAt - 5 * 60 * 1000; // 5 minutes before PR creation
         let copilotCommits = 0;
         let humanCommits = 0;
+        let inheritedCommits = 0;
         const humanAuthorSet = new Set<string>();
         for (const commit of commits) {
+          // Skip commits authored well before the PR was created (inherited from base branch)
+          const commitDate = new Date(commit.commit.author?.date ?? 0).getTime();
+          if (commitDate < inheritedCutoff) {
+            inheritedCommits++;
+            continue;
+          }
           const authorLogin = (commit.author?.login ?? "").toLowerCase();
           if (copilotLogins.has(authorLogin)) {
             copilotCommits++;
@@ -237,6 +247,7 @@ async function fetchRepoPRs(
           totalCommits: commits.length,
           copilotCommits,
           humanCommits,
+          inheritedCommits,
           hadHumanPush: humanCommits > 0,
           humanAuthors: [...humanAuthorSet],
           reviewRounds,
